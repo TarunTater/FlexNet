@@ -301,27 +301,27 @@ def shallow(epochs=5):
         validation_data, test_data)
     '''
 
-    '''net = Network('Ho Ja Shuru')
+    net = Network('ho_ja_shuru')
     l1 = InputLayer(inputShape = (784,1))
     l2 = ActivationLayer(inputShape=(700,1),passFunction='sigmoid')
-    l5 = ActivationLayer(inputShape=(200,1),passFunction='sigmoid')
-    l3 = ActivationLayer(inputShape=(100,1),passFunction='sigmoid')
-    l4 = ActivationLayer(inputShape=(10,1),passFunction='softmax',ifOutput=True,lossFunction="negativeLogLikelihood")
+    l3 = ActivationLayer(inputShape=(200,1),passFunction='sigmoid')
+    l4 = ActivationLayer(inputShape=(100,1),passFunction='sigmoid')
+    l5 = ActivationLayer(inputShape=(10,1),passFunction='softmax',ifOutput=True,lossFunction="negativeLogLikelihood")
 
     net.connectDense(l1,l2)
     # net.connectOneToOne(l1,l2)
     # net.connectDense(l2,l2)
-    net.connectDense(l2,l5)
-    net.connectDense(l5,l3)
+    net.connectDense(l2,l3)
     net.connectDense(l3,l4)
+    net.connectDense(l4,l5)
 
-    net.compile(mini_batch_size)
-    # net.loadParams("../data/weights/Ho Ja Shuru_EpochNum_14_accuracy_92.2475961538")
+    net.compile(mini_batch_size, True, "../../data/weights/ho_ja_shuru_EpochNum_6_accuracy_94.54")
+    #net.loadParams("../../data/weights/ho_ja_shuru_EpochNum_6_accuracy_94.54")
     net.fit(training_data, epochs, 0.1, validation_data, test_data)
     end = time.time()
     print end - start
 
-    return net'''
+    return net
 
     '''
     net = Network('Check Errors')
@@ -364,6 +364,7 @@ def shallow(epochs=5):
     net.fit(training_data, epochs, 0.1, validation_data, test_data)
     '''
 
+    '''
     net = Network('Check Multiple Output')
     l1 = InputLayer(inputShape = (196,), sequence_length=4)
     l2 = ActivationLayer(inputShape=(300,), passFunction='sigmoid')
@@ -384,7 +385,7 @@ def shallow(epochs=5):
     net.compile(mini_batch_size)
     # net.loadParams("../data/weights/Ho Ja Shuru_EpochNum_14_accuracy_92.2475961538")
     net.fit(training_data, epochs, 0.1, validation_data, test_data)
-
+    '''
 
     end = time.time()
     print end - start
@@ -414,4 +415,4 @@ def load_data_shared(filename="../data/mnist.pkl.gz"):
 mini_batch_size = 20
 training_data, validation_data, test_data = load_data_shared()
 
-net = shallow(epochs=60)
+net = shallow(epochs=20)

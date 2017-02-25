@@ -25,6 +25,7 @@ class Connection(object):
         '''
         if targetNeurons is None:
             targetNeurons = toLayer.numOfNeurons
+        self.name = None
         self.fromLayer = fromLayer
         self.toLayer = toLayer
         self.regularization = regularization
@@ -34,6 +35,8 @@ class Connection(object):
         self.targetNeurons = targetNeurons
         self.return_sequence = return_sequence
 
+    def setName(self,name):
+        self.name = name
     #### Implement the below methods ####
 
     # def __new__(cls, *args):
@@ -76,6 +79,7 @@ class OneToOneConnection(Connection):
         self.params.append(self.w)
 
     def feedForward(self,miniBatchSize):
+        print "feed  forward in progress for connection : ", self.name
         self.output = self.fromLayer.output * self.w
 
 class DenseConnection(Connection):
@@ -112,7 +116,7 @@ class DenseConnection(Connection):
         # must there be a dropout... can we integrate that ratio in our code by default or throw a suggestion to the user
         #Also, should we also throw other such suggestions to the user such as
         # copyOfLayerOutput = self.fromLayer.output
-
+        print "feed  forward in progress for connection : ", self.name
         self.output = T.dot(self.fromLayer.output,self.w) + self.b
 
 class ConvolutedConnection(Connection):

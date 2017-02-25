@@ -32,31 +32,6 @@ class Network(object):
         self.layers.append(layer)
         layer.setNetwork(self.name) #define the name in the model(supreme) class and assign it.
 
-    def updateLayersInNetwork(self,fromLayer,toLayer):
-        '''
-        :param fromLayer: Layer from which connection originates
-        :param toLayer:  Layer at which connection terminates
-        :return:
-        '''
-        if(fromLayer not in self.layers):
-            if isinstance(fromLayer,InputLayer):
-                self.inputLayer = fromLayer
-            self.addLayer(fromLayer)
-
-        if(toLayer not in self.layers):
-            self.addLayer(toLayer)
-
-    def updateConnectionsInNetwork(self,fromLayer,toLayer,newConnection):
-        '''
-        :param fromLayer: Layer from which connection originates
-        :param toLayer:  Layer at which connection terminates
-        :param newConnection: New Connection object to be added to network
-        :return:
-        '''
-        fromLayer.addOutgoingConnection(newConnection)
-        toLayer.addIncomingConnection(newConnection)
-        self.connections.append(newConnection)
-
     def connectOneToOne(self, fromLayer, toLayer,
                         regularization = None, initialization = None,return_sequence=False):
         '''
@@ -194,71 +169,7 @@ class Network(object):
         if not isOutput:
             raise(OutputLayerNotDefined(self.name))
 
-    def getTimeVariantLayers(self):
-        '''
-        If any layer has all the incoming connections as return_sequence = false, then the output of that layer has
-        to be computed at the last time step only. Otherwise, if even one incoming connection has return_sequence = true
-        then the output for that layer has to be computed at each time step
-        :return: set of layers which operate on timesteps
-        '''
-        timeLayers = []
-        for layer in self.layers:
-            timeLayerFound = False
-            for connection in layer.inConnections:
-                if connection.return_sequence:
-                    timeLayerFound = True
-                    break
-            if isinstance(layer,InputLayer):
-                if layer.sequence_length > 1:
-                    timeLayerFound = True
-            if timeLayerFound:
-                timeLayers.append(layer)
-        return timeLayers
-
-    def timeVariationalStep(self,x):
-        # Define the feedforward equations for each layer
-        for layer in self.timeVariantLayers:
-            if isinstance(layer,InputLayer):
-                layer.firstLayerRun(x,self.mini_batch_size)
-            else:
-                # Defining the input and output for each layer
-                layer.run(self.mini_batch_size)
-
-        ''' this is wrong - return the output of all those layers which are around the
-        corner in time varying layers(see example)'''
-        # return self.timeVariantLayers[-1].output
-        return [layer.output for layer in self.outputLayers]
-
-    def step(self,x):
-        # Define the feedforward equations for each layer
-        print 'inside step'
-        for layer in self.layers:
-            if isinstance(layer,InputLayer):
-                layer.firstLayerRun(x,self.mini_batch_size)
-            else:
-                # Defining the input and output for each layer
-                print layer.name
-                layer.run(self.mini_batch_size)
-
-        return [layer.output for layer in self.outputLayers]
-
-    def step2(self,x,idx):
-
-        t = T.switch(T.lt(idx,self.sequence_length-1),self.timeVariationalStep(x),self.step(x))
-
-        # Update the hidden states of the recurrent connection with the new updated output of fromLayer and run
-        # feedForward so that output variable of that connection gets updated
-
-        ''' Check if this correct over here for time varying case'''
-        for connection in self.connections:
-            if isinstance(connection,RecurrentConnection):
-                connection.recurrentHiddenState = connection.fromLayer.output
-                connection.feedForward(self.mini_batch_size)
-
-        # return [(layer.output,layer.name) for layer in self.outputLayers]
-        return [layer.output for layer in self.outputLayers]
-
-    def compile(self, mini_batch_size):
+    def compile(self, mini_batch_size, loadTF, filePath):
         '''
         :param mini_batch_size: batch size to be used for this network
         :return:
@@ -266,6 +177,7 @@ class Network(object):
         # Assign names to layers
         self.checkErrors(mini_batch_size)
         self.namingLayers()
+        self.namingConnections()
 
         # Construct a DAG out of the network
         g = constructGraph(self.layers)
@@ -291,39 +203,30 @@ class Network(object):
             # Assigning the output layer object of the network to the appropriate layer
             if layer.ifOutput:
                 self.outputLayers.append(layer)
+            #no multiple output
 
         # Symbolic theano variable for the input matrix to the network
         inputLen = len(self.inputLayer.shape)
         if self.sequence_length == 1:
-            self.x = T.TensorType('float64',(False,)*(inputLen + 1),name='inputMatrix')()
+            self.x = T.TensorType('float32',(False,)*(inputLen + 1),name='inputMatrix')()
         else:
-            self.x = T.TensorType('float64',(False,)*(inputLen + 2),name='inputMatrix')()
+            self.x = T.TensorType('float32',(False,)*(inputLen + 2),name='inputMatrix')()
 
         # print self.x.ndim
 
         # For each connection initialize the weights(parameters) of the connection
+
+
         for connection in self.connections:
             connection.initializeWeights()
-
             # if the connection is of type Recurrent, then run feedForward once to initialize the hidden state of
             # that connection
             if isinstance(connection,RecurrentConnection):
                 connection.feedForward(mini_batch_size)
 
-        # if self.sequence_length > 1:
-        #     shuffledList = [x for x in range(inputLen+2)]
-        #     shuffledList[0],shuffledList[1] = 1,0
-        #
-        #     self.x_shuffled = self.x.dimshuffle(tuple(shuffledList))
-        #     self.output_r, scan_updates = theano.scan(self.timeVariationalStep,sequences=self.x_shuffled[:-1]
-        #                          # ,non_sequences=self.timeVariantLayers
-        #                          ,outputs_info=None)
-        #     # self.output,scan_updates = theano.scan(self.step,sequences=self.x_shuffled[-1:]
-        #     #                                        # ,non_sequences=self.layers
-        #     #                                        ,outputs_info=None)
-        #     self.output = self.step(self.x_shuffled[-1:],self.output_r)[0]
-        # else:
-        #     self.output = self.step(self.x)[0]
+        if(loadTF == True):
+            self.loadParams(filePath)
+
         if self.sequence_length > 1:
             shuffledList = [x for x in range(inputLen+2)]
             shuffledList[0],shuffledList[1] = 1,0
@@ -389,6 +292,11 @@ class Network(object):
         # cost = self.outputLayers[0].cost(self.y,self.mini_batch_size) + self.outputLayers[1].cost(self.y,self.mini_batch_size)
         for ind,layer in enumerate(self.outputLayers):
             cost += layer.cost(self.y,self.output[ind],self.mini_batch_size)
+            print cost
+        #theano.printing.debugprint(cost)
+        #cost_printed  = theano.printing.Print("cost value = ")(cost)
+        print "final cost ", cost
+
         # for output,layerName in self.output:
         #     cost += self.layer_by_name[layerName].cost(self.y,self.mini_batch_size)
         # print self.output
@@ -403,9 +311,11 @@ class Network(object):
         theano.printing.pydotprint(cost,outfile='graph_correct.png',format='png')
         theano.printing.pydotprint(self.output,outfile='graph_output.png',format='png')
         accuracy = 0.0
+
         for ind,layer in enumerate(self.outputLayers):
             accuracy += layer.accuracy(self.output[ind],self.y)
         accuracy /= len(self.outputLayers)
+        print "accuracy ", accuracy
 
         # accuracy = self.outputLayers[0].accuracy(self.y)
 
@@ -420,8 +330,9 @@ class Network(object):
 
         train_mb = theano.function(
             [i],
-            # [cost,self.layers[-1].output,self.layers[-1].input,self.connections[-1].w],
-            [cost],
+            [cost,self.layers[-1].output,self.layers[-1].input,self.connections[-1].w],
+            #[cost_printed,self.layers[-1].output,self.layers[-1].input,self.connections[-1].w],
+            #[cost],
             # mode=theano.compile.MonitorMode(
             #             pre_func=inspect_inputs,
             #             post_func=inspect_outputs),
@@ -493,44 +404,41 @@ class Network(object):
             for minibatch_index in range(num_training_batches):
                 iteration = num_training_batches*epoch+minibatch_index
                 if iteration % 1000 == 0:
-                    print("Training mini-batch number {0}".format(iteration))
-                cost_ij = train_mb(minibatch_index)
-                if (iteration+1) % num_training_batches == 0:
-                    validation_accuracy = np.mean(
-                        [validate_mb_accuracy(j) for j in range(num_validation_batches)])
-                    print("Epoch {0}: validation accuracy {1:.2%}".format(
-                        epoch, validation_accuracy))
-                    print("Corresponding Loss : ",cost_ij)
+                    print("Training mini-batch number {0} for Epoch {1}".format(iteration,epoch))
+                cost_ij,_,_,_ = train_mb(minibatch_index)
 
-                    if validation_accuracy > best_validation_accuracy:
-                        print("This is the best validation accuracy to date.")
-                        best_validation_accuracy = validation_accuracy
-                        best_iteration = iteration
+            validation_accuracy = np.mean(
+                [validate_mb_accuracy(j) for j in range(num_validation_batches)])
+            print("Epoch {0}: validation accuracy {1:.2%}".format(
+                epoch, validation_accuracy))
+            print("Corresponding Loss : ",cost_ij)
 
+            #if validation_accuracy > best_validation_accuracy
+            if validation_accuracy > best_validation_accuracy and epoch > 5:#just to store less
+                print("This is the best validation accuracy to date.")
+                best_validation_accuracy = validation_accuracy
+                best_iteration = iteration
 
-                        # # Save Model for future reference
-                        # for eachConnection in self.connections:
-                        #     connectionName = eachConnection.toLayer.name + "+" + eachConnection.fromLayer.name
-                        #     print connectionName
-                        #     fileName = "../data/weights/" + self.name + "_EpochNum_" + str(epoch) + "_accuracy_" + str(best_validation_accuracy*100) + connectionName + ".pickle"
-                        #     #dictToSave[connectionName] = eachConnection.params
-                        #     #dictToSave[connectionName] = [param.get_value() for param in eachConnection.params]
-                        #     saveList = eachConnection.params
-                        #     print fileName
-                        #     with open(fileName, 'wb') as handle:
-                        #         cPickle.dump(saveList, handle, protocol=cPickle.HIGHEST_PROTOCOL)
-                        #
-                        # #To Load
-                        # #with open(filename.pickle, 'rb') as handle:
-                        # #    unserialized_data = pickle.load(handle)
-                        #
+                # Save Model for future reference
+                for eachConnection in self.connections:
+                    connectionName = eachConnection.name
+                    fileName = "../../data/weights/" + self.name + "_EpochNum_" + str(epoch) + "_accuracy_" + str(best_validation_accuracy*100) + connectionName + ".pickle"
+                    #dictToSave[connectionName] = eachConnection.params
+                    #dictToSave[connectionName] = [param.get_value() for param in eachConnection.params]
+                    saveList = eachConnection.params
+                    print "weights saved in ", fileName
+                    with open(fileName, 'wb') as handle:
+                        cPickle.dump(saveList, handle, protocol=cPickle.HIGHEST_PROTOCOL)
 
-                        if test_data:
-                            test_accuracy = np.mean(
-                                [test_mb_accuracy(j) for j in range(num_test_batches)])
-                            print('The corresponding test accuracy is {0:.2%}'.format(
-                                test_accuracy))
+                #To Load
+                #with open(filename.pickle, 'rb') as handle:
+                #    unserialized_data = pickle.load(handle)
 
+                if test_data:
+                    test_accuracy = np.mean(
+                        [test_mb_accuracy(j) for j in range(num_test_batches)])
+                    print('The corresponding test accuracy is {0:.2%}'.format(
+                        test_accuracy))
 
             print time.time() - tic
         print("Finished training network.")
@@ -541,42 +449,79 @@ class Network(object):
     '''
     Everything below this is work in progress
     '''
+
+    def getTimeVariantLayers(self):
+        '''
+        If any layer has all the incoming connections as return_sequence = false, then the output of that layer has
+        to be computed at the last time step only. Otherwise, if even one incoming connection has return_sequence = true
+        then the output for that layer has to be computed at each time step
+        :return: set of layers which operate on timesteps
+        '''
+        timeLayers = []
+        for layer in self.layers:
+            timeLayerFound = False
+            for connection in layer.inConnections:
+                if connection.return_sequence:
+                    timeLayerFound = True
+                    break
+            if isinstance(layer,InputLayer):
+                if layer.sequence_length > 1:
+                    timeLayerFound = True
+            if timeLayerFound:
+                timeLayers.append(layer)
+        return timeLayers
+
     def loadParams(self,filePath):
         #Loading the params :
-
+        print "inside load params"
         for eachConnection in self.connections:
-            connectionName = eachConnection.toLayer.name + "+" + eachConnection.fromLayer.name
+            connectionName = eachConnection.name
             fileName = filePath + connectionName + ".pickle"
             with open(fileName, 'rb') as handle:
                 dataLoaded = cPickle.load(handle)
+                if(fileName == "../../data/weights/ho_ja_shuru_EpochNum_6_accuracy_94.54Layer(700, 1)+Layer(784, 1).pickle"):
+                    print dataLoaded[0].eval()
+
             try:
+                if(fileName == "../../data/weights/ho_ja_shuru_EpochNum_6_accuracy_94.54Layer(700, 1)+Layer(784, 1).pickle"):
+                    print dataLoaded[0].eval()
                 eachConnection.params = dataLoaded #What about convoluted connection
                 #eachConnection.params = [theano.shared(param.eval()) for param in dataLoaded[connectionName]]#10%
                 #eachConnection.params = [theano.shared(param).eval() for param in dataLoaded[connectionName]]#works
                 #eachConnection.params = [theano.shared(param) for param in dataLoaded[connectionName]]
-                print "yes"
                 if isinstance(eachConnection,OneToOneConnection):
-                    print len(eachConnection.params)
+                    print "one to one connection ", len(eachConnection.params)
                     eachConnection.w = eachConnection.params[0]
+                    if(fileName == "../../data/weights/ho_ja_shuru_EpochNum_6_accuracy_94.54Layer(700, 1)+Layer(784, 1).pickle"):
+                        print "printing for check in one-one connection"
+                        print eachConnection.w.eval()
                 elif isinstance(eachConnection,DenseConnection):
-                    print len(eachConnection.params)
+                    print "Dense Connection ", len(eachConnection.params)
                     eachConnection.w = eachConnection.params[0]
+                    if(fileName == "../../data/weights/ho_ja_shuru_EpochNum_6_accuracy_94.54Layer(700, 1)+Layer(784, 1).pickle"):
+                        print "printing for check in Dense connection"
+                        print eachConnection.w.eval()
                     eachConnection.b = eachConnection.params[1]
                     #eachConnection.w = theano.shared(eachConnection.params[0],name='w', borrow=True)
                     #eachConnection.b = theano.shared(eachConnection.params[1],name='b', borrow=True)
                 elif isinstance(eachConnection,RecurrentConnection):
                     print len(eachConnection.params)
                     eachConnection.w_h = eachConnection.params[0]
+                    if(fileName == "../../data/weights/ho_ja_shuru_EpochNum_6_accuracy_94.54Layer(700, 1)+Layer(784, 1).pickle"):
+                        print eachConnection.w_h.eval()
                     eachConnection.w_o = eachConnection.params[1]
                     eachConnection.b_h = eachConnection.params[2]
                     eachConnection.b_o = eachConnection.params[3]
                     #self.params = [self.w_h, self.w_o, self.b_h,self.b_o]
                 print connectionName, eachConnection.params
+                if(fileName == "../../data/weights/ho_ja_shuru_EpochNum_6_accuracy_94.54Layer(700, 1)+Layer(784, 1).pickle"):
+                    print "printing last check"
+                    print eachConnection.params[0].eval()
+                    #print eachConnection.params[1].eval()
+
             except Exception, e:
                 print repr(e)
                 # raise "Different connections than the one you are trying to Load. Please check your network."
-
-
 
         # print('loaded weight',self.connections[-1].w.eval())
         self.params = [param for connection in self.connections for param in connection.params]
@@ -661,24 +606,7 @@ class Network(object):
         # print('loaded weight',self.connections[-1].w.eval())
         self.params = [param for connection in self.connections for param in connection.params]
 
-    def size(self,data):
-        "Return the size of the dataset `data`."
-        return data[0].get_value(borrow=True).shape[0]
 
-    def printConnections(self):
-        print 'Connections Layer Wise : \n======================'
-
-        for i in self.layers:
-            print 'For Layer with shape :', i.shape
-            print 'Incoming Connections :\n-----------------'
-            for j in i.inConnections:
-                print j.fromLayer.shape , j.toLayer.shape
-            print '------------------------'
-
-            print 'Outgoing Connections :\n-----------------'
-            for j in i.outConnections:
-                print j.fromLayer.shape , j.toLayer.shape
-            print '------------------------'
     '''
     def namingLayers(self):
         #output names as Layer(<class 'deepLearningLibrary.layers.ActivationLayer'>) 1
@@ -702,7 +630,8 @@ class Network(object):
         for i, layer in enumerate(self.layers):
             # Also generates names for each of the layers, if not given already.
             if not layer.name:
-                layer.setName('Layer%d%s' %(i+1,str(layer.shape)))
+                #removed layer numbers
+                layer.setName('Layer%s' %(str(layer.shape)))
 
             # Raise an exception if there is a name clash
             if self.layer_by_name.has_key(layer.name):
@@ -710,9 +639,120 @@ class Network(object):
             else:
                 self.layer_by_name[layer.name] = layer
 
+    def namingConnections(self):
+        self.connection_by_name = dict()
+        # Builds a dictionary of the layers by name.
+        for i, connection in enumerate(self.connections):
+            # Also generates names for each of the layers, if not given already.
+            if not connection.name:
+                #connection numbers removed
+                connection.setName('Layer%s+Layer%s' %(str(connection.toLayer.shape), str(connection.fromLayer.shape)))
+
+                print connection.name
+                #what if similar shape of the connections
+            # Raise an exception if there is a name clash
+            if self.connection_by_name.has_key(connection.name):
+                raise "connection Name Clash"
+            else:
+                self.connection_by_name[connection.name] = connection
+
+    def printConnections(self):
+        print 'Connections Layer Wise : \n======================'
+
+        for i in self.layers:
+            print 'For Layer with shape :', i.shape
+            print 'Incoming Connections :\n-----------------'
+            for j in i.inConnections:
+                print j.fromLayer.shape , j.toLayer.shape
+            print '------------------------'
+
+            print 'Outgoing Connections :\n-----------------'
+            for j in i.outConnections:
+                print j.fromLayer.shape , j.toLayer.shape
+            print '------------------------'
+
+    def size(self,data):
+        "Return the size of the dataset `data`."
+        return data[0].get_value(borrow=True).shape[0]
+
+    def step(self,x):
+        # Define the feedforward equations for each layer
+        print 'inside step'
+        for layer in self.layers:
+            if isinstance(layer,InputLayer):
+                layer.firstLayerRun(x,self.mini_batch_size)
+            else:
+                # Defining the input and output for each layer
+                print layer.name
+                layer.run(self.mini_batch_size)
+
+        return [layer.output for layer in self.outputLayers]
+
+    def step2(self,x,idx):
+
+        t = T.switch(T.lt(idx,self.sequence_length-1),self.timeVariationalStep(x),self.step(x))
+
+        # Update the hidden states of the recurrent connection with the new updated output of fromLayer and run
+        # feedForward so that output variable of that connection gets updated
+
+        ''' Check if this correct over here for time varying case'''
+        for connection in self.connections:
+            if isinstance(connection,RecurrentConnection):
+                connection.recurrentHiddenState = connection.fromLayer.output
+                connection.feedForward(self.mini_batch_size)
+
+        # return [(layer.output,layer.name) for layer in self.outputLayers]
+        return [layer.output for layer in self.outputLayers]
+
+
+    def timeVariationalStep(self,x):
+        # Define the feedforward equations for each layer
+        for layer in self.timeVariantLayers:
+            if isinstance(layer,InputLayer):
+                layer.firstLayerRun(x,self.mini_batch_size)
+            else:
+                # Defining the input and output for each layer
+                layer.run(self.mini_batch_size)
+
+        ''' this is wrong - return the output of all those layers which are around the
+        corner in time varying layers(see example)'''
+        # return self.timeVariantLayers[-1].output
+        return [layer.output for layer in self.outputLayers]
+
+
     def transform(self, data):
         #transform the dataset if needed
         pass
+
+
+
+    def updateConnectionsInNetwork(self,fromLayer,toLayer,newConnection):
+        '''
+        :param fromLayer: Layer from which connection originates
+        :param toLayer:  Layer at which connection terminates
+        :param newConnection: New Connection object to be added to network
+        :return:
+        '''
+        fromLayer.addOutgoingConnection(newConnection)
+        toLayer.addIncomingConnection(newConnection)
+        self.connections.append(newConnection)
+
+    def updateLayersInNetwork(self,fromLayer,toLayer):
+        '''
+        :param fromLayer: Layer from which connection originates
+        :param toLayer:  Layer at which connection terminates
+        :return:
+        '''
+        if(fromLayer not in self.layers):
+            if isinstance(fromLayer,InputLayer):
+                self.inputLayer = fromLayer
+            self.addLayer(fromLayer)
+
+        if(toLayer not in self.layers):
+            self.addLayer(toLayer)
+
+
+
 
 def inspect_inputs(i, node, fn):
     print(i, node, "input(s) value(s):", [input[0] for input in fn.inputs])
